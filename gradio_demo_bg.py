@@ -5,6 +5,12 @@ import numpy as np
 import torch
 import safetensors.torch as sf
 import db_examples
+import tempfile
+
+# 设置自定义临时目录
+temp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp')
+os.makedirs(temp_dir, exist_ok=True)
+os.environ['GRADIO_TEMP_DIR'] = temp_dir
 
 from PIL import Image
 from diffusers import StableDiffusionPipeline, StableDiffusionImg2ImgPipeline
@@ -410,8 +416,8 @@ with block:
     with gr.Row():
         with gr.Column():
             with gr.Row():
-                input_fg = gr.Image(source='upload', type="numpy", label="Foreground", height=480)
-                input_bg = gr.Image(source='upload', type="numpy", label="Background", height=480)
+                input_fg = gr.Image(type="numpy", label="Foreground", height=480)
+                input_bg = gr.Image(type="numpy", label="Background", height=480)
             prompt = gr.Textbox(label="Prompt")
             bg_source = gr.Radio(choices=[e.value for e in BGSource],
                                  value=BGSource.UPLOAD.value,
@@ -462,4 +468,4 @@ with block:
     bg_gallery.select(bg_gallery_selected, inputs=bg_gallery, outputs=input_bg)
 
 
-block.launch(server_name='0.0.0.0')
+block.launch(server_name='127.0.0.1')

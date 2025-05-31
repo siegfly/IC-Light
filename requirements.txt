@@ -1,10 +1,10 @@
-diffusers==0.27.2
-transformers==4.36.2
+diffusers
+transformers
 opencv-python
 safetensors
-pillow==10.2.0
+pillow
 einops
 torch
 peft
-gradio==3.41.2
-protobuf==3.20
+gradio
+protobuf

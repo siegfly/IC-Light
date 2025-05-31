@@ -384,8 +384,8 @@ with block:
     with gr.Row():
         with gr.Column():
             with gr.Row():
-                input_fg = gr.Image(source='upload', type="numpy", label="Image", height=480)
-                output_bg = gr.Image(type="numpy", label="Preprocessed Foreground", height=480)
+                input_fg = gr.Image(label="Image", height=480, type="numpy")
+                output_bg = gr.Image(label="Preprocessed Foreground", height=480, type="numpy")
             prompt = gr.Textbox(label="Prompt")
             bg_source = gr.Radio(choices=[e.value for e in BGSource],
                                  value=BGSource.NONE.value,
@@ -430,4 +430,4 @@ with block:
     example_quick_subjects.click(lambda x: x[0], inputs=example_quick_subjects, outputs=prompt, show_progress=False, queue=False)
 
 
-block.launch(server_name='0.0.0.0')
+block.launch(server_name='127.0.0.1')
