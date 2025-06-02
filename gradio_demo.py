@@ -5,6 +5,9 @@ import numpy as np
 import torch
 import safetensors.torch as sf
 import db_examples
+import re
+import requests
+import json
 
 from PIL import Image
 from diffusers import StableDiffusionPipeline, StableDiffusionImg2ImgPipeline
@@ -14,6 +17,45 @@ from transformers import CLIPTextModel, CLIPTokenizer
 from briarmbg import BriaRMBG
 from enum import Enum
 from torch.hub import download_url_to_file
+
+# 翻译功能
+def contains_chinese(text):
+    """检测文本是否包含中文字符"""
+    chinese_pattern = re.compile(r'[\u4e00-\u9fff]')
+    return bool(chinese_pattern.search(text))
+
+def translate_to_english(text):
+    """将中文文本翻译为英文，如果是英文则不变"""
+    if not text or not text.strip():
+        return text
+    
+    # 如果不包含中文，直接返回原文
+    if not contains_chinese(text):
+        return text
+    
+    try:
+        # 使用免费的翻译API (Google Translate)
+        url = "https://translate.googleapis.com/translate_a/single"
+        params = {
+            'client': 'gtx',
+            'sl': 'zh',  # 源语言：中文
+            'tl': 'en',  # 目标语言：英文
+            'dt': 't',
+            'q': text
+        }
+        
+        response = requests.get(url, params=params, timeout=10)
+        if response.status_code == 200:
+            result = response.json()
+            if result and len(result) > 0 and len(result[0]) > 0:
+                translated_text = ''.join([item[0] for item in result[0] if item[0]])
+                return translated_text
+    except Exception as e:
+        print(f"翻译失败: {e}")
+        # 如果翻译失败，返回原文
+        return text
+    
+    return text
 
 
 # 'stablediffusionapi/realistic-vision-v51'
@@ -450,7 +492,9 @@ with block:
             with gr.Row():
                 input_fg = gr.Image(label="Image", height=480, type="numpy")
                 output_bg = gr.Image(label="Preprocessed Foreground", height=480, type="numpy")
-            prompt = gr.Textbox(label="Prompt")
+            with gr.Row():
+                prompt = gr.Textbox(label="Prompt", scale=4)
+                translate_prompt_btn = gr.Button("🌐 翻译", size="sm", scale=1)
             bg_source = gr.Radio(choices=[e.value for e in BGSource],
                                  value=BGSource.NONE.value,
                                  label="Lighting Preference (Initial Latent)", type='value')
@@ -478,8 +522,12 @@ with block:
                 lowres_denoise = gr.Slider(label="Lowres Denoise (for initial latent)", minimum=0.1, maximum=1.0, value=0.9, step=0.01)
                 highres_scale = gr.Slider(label="Highres Scale", minimum=1.0, maximum=3.0, value=1.5, step=0.01)
                 highres_denoise = gr.Slider(label="Highres Denoise", minimum=0.1, maximum=1.0, value=0.5, step=0.01)
-                a_prompt = gr.Textbox(label="Added Prompt", value='best quality')
-                n_prompt = gr.Textbox(label="Negative Prompt", value='lowres, bad anatomy, bad hands, cropped, worst quality')
+                with gr.Row():
+                    a_prompt = gr.Textbox(label="Added Prompt", value='best quality', scale=4)
+                    translate_a_prompt_btn = gr.Button("🌐 翻译", size="sm", scale=1)
+                with gr.Row():
+                    n_prompt = gr.Textbox(label="Negative Prompt", value='lowres, bad anatomy, bad hands, cropped, worst quality', scale=4)
+                    translate_n_prompt_btn = gr.Button("🌐 翻译", size="sm", scale=1)
         with gr.Column():
             result_gallery = gr.Gallery(height=832, object_fit='contain', label='Outputs')
     with gr.Row():
@@ -497,6 +545,11 @@ with block:
     relight_button.click(fn=process_relight, inputs=ips, outputs=[output_bg, result_gallery])
     example_quick_prompts.click(lambda x, y: ', '.join(y.split(', ')[:2] + [x[0]]), inputs=[example_quick_prompts, prompt], outputs=prompt, show_progress=False, queue=False)
     example_quick_subjects.click(lambda x: x[0], inputs=example_quick_subjects, outputs=prompt, show_progress=False, queue=False)
+    
+    # 翻译按钮事件
+    translate_prompt_btn.click(fn=translate_to_english, inputs=prompt, outputs=prompt, show_progress=False, queue=False)
+    translate_a_prompt_btn.click(fn=translate_to_english, inputs=a_prompt, outputs=a_prompt, show_progress=False, queue=False)
+    translate_n_prompt_btn.click(fn=translate_to_english, inputs=n_prompt, outputs=n_prompt, show_progress=False, queue=False)
 
 
 block.launch(server_name='127.0.0.1')
