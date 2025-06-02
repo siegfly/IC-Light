@@ -6,11 +6,66 @@ import torch
 import safetensors.torch as sf
 import db_examples
 import tempfile
+import atexit
+import shutil
+import signal
+import sys
 
 # 设置自定义临时目录
 temp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp')
 os.makedirs(temp_dir, exist_ok=True)
 os.environ['GRADIO_TEMP_DIR'] = temp_dir
+
+# 临时文件清理函数
+def cleanup_temp_files():
+    """清理临时文件和目录"""
+    try:
+        temp_uploads_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp_uploads')
+        temp_results_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp_results')
+        
+        if os.path.exists(temp_uploads_dir):
+            shutil.rmtree(temp_uploads_dir, ignore_errors=True)
+            print(f"已清理临时上传目录: {temp_uploads_dir}")
+            
+        if os.path.exists(temp_results_dir):
+            shutil.rmtree(temp_results_dir, ignore_errors=True)
+            print(f"已清理临时结果目录: {temp_results_dir}")
+            
+        if os.path.exists(temp_dir):
+            # 清理temp目录内容但保留目录本身
+            for filename in os.listdir(temp_dir):
+                file_path = os.path.join(temp_dir, filename)
+                try:
+                    if os.path.isfile(file_path) or os.path.islink(file_path):
+                        os.unlink(file_path)
+                    elif os.path.isdir(file_path):
+                        shutil.rmtree(file_path)
+                except Exception as e:
+                    print(f"删除 {file_path} 时出错: {e}")
+            print(f"已清理临时目录: {temp_dir}")
+            
+    except Exception as e:
+        print(f"清理临时文件时出错: {e}")
+
+# 信号处理函数
+def signal_handler(signum, frame):
+    """处理中断信号"""
+    print(f"\n接收到信号 {signum}，正在清理临时文件...")
+    cleanup_temp_files()
+    print("清理完成，程序退出。")
+    sys.exit(0)
+
+# 注册退出清理函数
+atexit.register(cleanup_temp_files)
+
+# 注册信号处理器（Windows兼容）
+try:
+    signal.signal(signal.SIGINT, signal_handler)  # Ctrl+C
+    signal.signal(signal.SIGTERM, signal_handler)  # 终止信号
+    if hasattr(signal, 'SIGBREAK'):  # Windows特有
+        signal.signal(signal.SIGBREAK, signal_handler)  # Ctrl+Break
+except Exception as e:
+    print(f"注册信号处理器时出错: {e}")
 
 from PIL import Image
 from diffusers import StableDiffusionPipeline, StableDiffusionImg2ImgPipeline
@@ -223,7 +278,7 @@ def resize_without_crop(image, target_width, target_height):
 
 
 @torch.inference_mode()
-def run_rmbg(img, sigma=0.0):
+def run_rmbg(img, sigma=0.0, subject_scale=1.0, subject_x_offset=0.0, subject_y_offset=0.0):
     H, W, C = img.shape
     assert C == 3
     k = (256.0 / float(H * W)) ** 0.5
@@ -233,7 +288,71 @@ def run_rmbg(img, sigma=0.0):
     alpha = torch.nn.functional.interpolate(alpha, size=(H, W), mode="bilinear")
     alpha = alpha.movedim(1, -1)[0]
     alpha = alpha.detach().float().cpu().numpy().clip(0, 1)
-    result = 127 + (img.astype(np.float32) - 127 + sigma) * alpha
+    
+    # 应用主体缩放和位置调整
+    if subject_scale != 1.0 or subject_x_offset != 0.0 or subject_y_offset != 0.0:
+        # 确保alpha是2D数组
+        alpha = alpha.squeeze() if len(alpha.shape) > 2 else alpha
+        # 创建变换后的前景和alpha
+        transformed_img = np.zeros_like(img)
+        transformed_alpha = np.zeros((H, W), dtype=alpha.dtype)
+        
+        # 计算缩放后的尺寸
+        scaled_h = int(H * subject_scale)
+        scaled_w = int(W * subject_scale)
+        
+        # 缩放图像和alpha
+        if scaled_h > 0 and scaled_w > 0:
+            scaled_img = resize_without_crop(img, scaled_w, scaled_h)
+            # 确保alpha是2D数组
+            alpha_2d = alpha if len(alpha.shape) == 2 else alpha.squeeze()
+            # 将alpha转换为3通道图像进行缩放，然后取第一个通道
+            alpha_3ch = np.stack([alpha_2d, alpha_2d, alpha_2d], axis=-1)
+            scaled_alpha_3ch = resize_without_crop((alpha_3ch * 255).astype(np.uint8), scaled_w, scaled_h)
+            scaled_alpha = (scaled_alpha_3ch[:, :, 0].astype(np.float32)) / 255.0
+            
+            # 计算放置位置（考虑偏移）
+            center_x = W // 2 + int(subject_x_offset * W)
+            center_y = H // 2 + int(subject_y_offset * H)
+            
+            start_x = max(0, center_x - scaled_w // 2)
+            start_y = max(0, center_y - scaled_h // 2)
+            end_x = min(W, start_x + scaled_w)
+            end_y = min(H, start_y + scaled_h)
+            
+            # 计算在缩放图像中的对应区域
+            src_start_x = max(0, scaled_w // 2 - center_x) if center_x < scaled_w // 2 else 0
+            src_start_y = max(0, scaled_h // 2 - center_y) if center_y < scaled_h // 2 else 0
+            
+            # 确保目标区域和源区域尺寸匹配
+            dst_h = end_y - start_y
+            dst_w = end_x - start_x
+            src_end_x = min(scaled_w, src_start_x + dst_w)
+            src_end_y = min(scaled_h, src_start_y + dst_h)
+            
+            # 重新调整目标区域以匹配实际可用的源区域
+            actual_w = src_end_x - src_start_x
+            actual_h = src_end_y - src_start_y
+            end_x = start_x + actual_w
+            end_y = start_y + actual_h
+            
+            # 放置缩放后的图像和alpha
+            if end_x > start_x and end_y > start_y and src_end_x > src_start_x and src_end_y > src_start_y:
+                transformed_img[start_y:end_y, start_x:end_x] = scaled_img[src_start_y:src_end_y, src_start_x:src_end_x]
+                # scaled_alpha现在确保是2D数组
+                transformed_alpha[start_y:end_y, start_x:end_x] = scaled_alpha[src_start_y:src_end_y, src_start_x:src_end_x]
+        
+        # 使用变换后的图像和alpha
+        img = transformed_img
+        alpha = transformed_alpha
+    
+    # 确保alpha是2D数组
+    if len(alpha.shape) > 2:
+        alpha = alpha.squeeze()
+    if len(alpha.shape) > 2:
+        alpha = alpha[:, :, 0] if alpha.shape[2] == 1 else alpha.mean(axis=2)
+    
+    result = 127 + (img.astype(np.float32) - 127 + sigma) * alpha[..., np.newaxis]
     return result.clip(0, 255).astype(np.uint8), alpha
 
 
@@ -330,16 +449,16 @@ def process(input_fg, input_bg, prompt, image_width, image_height, num_samples, 
 
 
 @torch.inference_mode()
-def process_relight(input_fg, input_bg, prompt, image_width, image_height, num_samples, seed, steps, a_prompt, n_prompt, cfg, highres_scale, highres_denoise, bg_source):
-    input_fg, matting = run_rmbg(input_fg)
+def process_relight(input_fg, input_bg, prompt, image_width, image_height, num_samples, seed, steps, a_prompt, n_prompt, cfg, highres_scale, highres_denoise, bg_source, subject_scale, subject_x_offset, subject_y_offset):
+    input_fg, matting = run_rmbg(input_fg, sigma=0.0, subject_scale=subject_scale, subject_x_offset=subject_x_offset, subject_y_offset=subject_y_offset)
     results, extra_images = process(input_fg, input_bg, prompt, image_width, image_height, num_samples, seed, steps, a_prompt, n_prompt, cfg, highres_scale, highres_denoise, bg_source)
     results = [(x * 255.0).clip(0, 255).astype(np.uint8) for x in results]
     return results + extra_images
 
 
 @torch.inference_mode()
-def process_normal(input_fg, input_bg, prompt, image_width, image_height, num_samples, seed, steps, a_prompt, n_prompt, cfg, highres_scale, highres_denoise, bg_source):
-    input_fg, matting = run_rmbg(input_fg, sigma=16)
+def process_normal(input_fg, input_bg, prompt, image_width, image_height, num_samples, seed, steps, a_prompt, n_prompt, cfg, highres_scale, highres_denoise, bg_source, subject_scale, subject_x_offset, subject_y_offset):
+    input_fg, matting = run_rmbg(input_fg, sigma=16, subject_scale=subject_scale, subject_x_offset=subject_x_offset, subject_y_offset=subject_y_offset)
 
     print('left ...')
     left = process(input_fg, input_bg, prompt, image_width, image_height, 1, seed, steps, a_prompt, n_prompt, cfg, highres_scale, highres_denoise, BGSource.LEFT.value)[0][0]
@@ -409,7 +528,10 @@ class BGSource(Enum):
     GREY = "Ambient"
 
 
-block = gr.Blocks().queue()
+# 创建Gradio应用，启用自动清理机制
+# delete_cache参数: (清理频率秒, 文件最大存活时间秒)
+# 每小时清理超过1小时的临时文件
+block = gr.Blocks(delete_cache=(3600, 3600)).queue()
 with block:
     with gr.Row():
         gr.Markdown("## IC-Light (Relighting with Foreground and Background Condition)")
@@ -435,6 +557,13 @@ with block:
                     image_width = gr.Slider(label="Image Width", minimum=256, maximum=1024, value=512, step=64)
                     image_height = gr.Slider(label="Image Height", minimum=256, maximum=1024, value=640, step=64)
 
+            with gr.Accordion("Subject Transform", open=True):
+                with gr.Row():
+                    subject_scale = gr.Slider(label="Subject Scale", minimum=0.1, maximum=3.0, value=1.0, step=0.01)
+                with gr.Row():
+                    subject_x_offset = gr.Slider(label="Subject X Offset", minimum=-0.5, maximum=0.5, value=0.0, step=0.01)
+                    subject_y_offset = gr.Slider(label="Subject Y Offset", minimum=-0.5, maximum=0.5, value=0.0, step=0.01)
+
             with gr.Accordion("Advanced options", open=False):
                 steps = gr.Slider(label="Steps", minimum=1, maximum=100, value=20, step=1)
                 cfg = gr.Slider(label="CFG Scale", minimum=1.0, maximum=32.0, value=7.0, step=0.01)
@@ -457,13 +586,24 @@ with block:
             outputs=[result_gallery],
             run_on_click=True, examples_per_page=1024
         )
-    ips = [input_fg, input_bg, prompt, image_width, image_height, num_samples, seed, steps, a_prompt, n_prompt, cfg, highres_scale, highres_denoise, bg_source]
+    ips = [input_fg, input_bg, prompt, image_width, image_height, num_samples, seed, steps, a_prompt, n_prompt, cfg, highres_scale, highres_denoise, bg_source, subject_scale, subject_x_offset, subject_y_offset]
     relight_button.click(fn=process_relight, inputs=ips, outputs=[result_gallery])
     normal_button.click(fn=process_normal, inputs=ips, outputs=[result_gallery])
     example_prompts.click(lambda x: x[0], inputs=example_prompts, outputs=prompt, show_progress=False, queue=False)
 
     def bg_gallery_selected(gal, evt: gr.SelectData):
-        return gal[evt.index]['name']
+        import numpy as np
+        from PIL import Image
+        
+        # 如果gal[evt.index]是tuple，取第一个元素作为路径
+        item = gal[evt.index]
+        if isinstance(item, tuple):
+            image_path = item[0]
+        else:
+            image_path = item
+            
+        image = Image.open(image_path)
+        return np.array(image)
 
     bg_gallery.select(bg_gallery_selected, inputs=bg_gallery, outputs=input_bg)
 

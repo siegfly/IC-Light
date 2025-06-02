@@ -217,7 +217,7 @@ def resize_without_crop(image, target_width, target_height):
 
 
 @torch.inference_mode()
-def run_rmbg(img, sigma=0.0):
+def run_rmbg(img, sigma=0.0, subject_scale=1.0, subject_x_offset=0.0, subject_y_offset=0.0):
     H, W, C = img.shape
     assert C == 3
     k = (256.0 / float(H * W)) ** 0.5
@@ -227,7 +227,71 @@ def run_rmbg(img, sigma=0.0):
     alpha = torch.nn.functional.interpolate(alpha, size=(H, W), mode="bilinear")
     alpha = alpha.movedim(1, -1)[0]
     alpha = alpha.detach().float().cpu().numpy().clip(0, 1)
-    result = 127 + (img.astype(np.float32) - 127 + sigma) * alpha
+    
+    # 应用主体缩放和位置调整
+    if subject_scale != 1.0 or subject_x_offset != 0.0 or subject_y_offset != 0.0:
+        # 确保alpha是2D数组
+        alpha = alpha.squeeze() if len(alpha.shape) > 2 else alpha
+        # 创建变换后的前景和alpha
+        transformed_img = np.zeros_like(img)
+        transformed_alpha = np.zeros((H, W), dtype=alpha.dtype)
+        
+        # 计算缩放后的尺寸
+        scaled_h = int(H * subject_scale)
+        scaled_w = int(W * subject_scale)
+        
+        # 缩放图像和alpha
+        if scaled_h > 0 and scaled_w > 0:
+            scaled_img = resize_without_crop(img, scaled_w, scaled_h)
+            # 确保alpha是2D数组
+            alpha_2d = alpha if len(alpha.shape) == 2 else alpha.squeeze()
+            # 将alpha转换为3通道图像进行缩放，然后取第一个通道
+            alpha_3ch = np.stack([alpha_2d, alpha_2d, alpha_2d], axis=-1)
+            scaled_alpha_3ch = resize_without_crop((alpha_3ch * 255).astype(np.uint8), scaled_w, scaled_h)
+            scaled_alpha = (scaled_alpha_3ch[:, :, 0].astype(np.float32)) / 255.0
+            
+            # 计算放置位置（考虑偏移）
+            center_x = W // 2 + int(subject_x_offset * W)
+            center_y = H // 2 + int(subject_y_offset * H)
+            
+            start_x = max(0, center_x - scaled_w // 2)
+            start_y = max(0, center_y - scaled_h // 2)
+            end_x = min(W, start_x + scaled_w)
+            end_y = min(H, start_y + scaled_h)
+            
+            # 计算在缩放图像中的对应区域
+            src_start_x = max(0, scaled_w // 2 - center_x) if center_x < scaled_w // 2 else 0
+            src_start_y = max(0, scaled_h // 2 - center_y) if center_y < scaled_h // 2 else 0
+            
+            # 确保目标区域和源区域尺寸匹配
+            dst_h = end_y - start_y
+            dst_w = end_x - start_x
+            src_end_x = min(scaled_w, src_start_x + dst_w)
+            src_end_y = min(scaled_h, src_start_y + dst_h)
+            
+            # 重新调整目标区域以匹配实际可用的源区域
+            actual_w = src_end_x - src_start_x
+            actual_h = src_end_y - src_start_y
+            end_x = start_x + actual_w
+            end_y = start_y + actual_h
+            
+            # 放置缩放后的图像和alpha
+            if end_x > start_x and end_y > start_y and src_end_x > src_start_x and src_end_y > src_start_y:
+                transformed_img[start_y:end_y, start_x:end_x] = scaled_img[src_start_y:src_end_y, src_start_x:src_end_x]
+                # scaled_alpha现在确保是2D数组
+                transformed_alpha[start_y:end_y, start_x:end_x] = scaled_alpha[src_start_y:src_end_y, src_start_x:src_end_x]
+        
+        # 使用变换后的图像和alpha
+        img = transformed_img
+        alpha = transformed_alpha
+    
+    # 确保alpha是2D数组
+    if len(alpha.shape) > 2:
+        alpha = alpha.squeeze()
+    if len(alpha.shape) > 2:
+        alpha = alpha[:, :, 0] if alpha.shape[2] == 1 else alpha.mean(axis=2)
+    
+    result = 127 + (img.astype(np.float32) - 127 + sigma) * alpha[..., np.newaxis]
     return result.clip(0, 255).astype(np.uint8), alpha
 
 
@@ -337,8 +401,8 @@ def process(input_fg, prompt, image_width, image_height, num_samples, seed, step
 
 
 @torch.inference_mode()
-def process_relight(input_fg, prompt, image_width, image_height, num_samples, seed, steps, a_prompt, n_prompt, cfg, highres_scale, highres_denoise, lowres_denoise, bg_source):
-    input_fg, matting = run_rmbg(input_fg)
+def process_relight(input_fg, prompt, image_width, image_height, num_samples, seed, steps, a_prompt, n_prompt, cfg, highres_scale, highres_denoise, lowres_denoise, bg_source, subject_scale, subject_x_offset, subject_y_offset):
+    input_fg, matting = run_rmbg(input_fg, sigma=0.0, subject_scale=subject_scale, subject_x_offset=subject_x_offset, subject_y_offset=subject_y_offset)
     results = process(input_fg, prompt, image_width, image_height, num_samples, seed, steps, a_prompt, n_prompt, cfg, highres_scale, highres_denoise, lowres_denoise, bg_source)
     return input_fg, results
 
@@ -404,6 +468,11 @@ with block:
                     image_height = gr.Slider(label="Image Height", minimum=256, maximum=1024, value=640, step=64)
 
             with gr.Accordion("Advanced options", open=False):
+                with gr.Row():
+                    subject_scale = gr.Slider(label="Subject Scale", minimum=0.1, maximum=3.0, value=1.0, step=0.01)
+                with gr.Row():
+                    subject_x_offset = gr.Slider(label="Subject X Offset", minimum=-0.5, maximum=0.5, value=0.0, step=0.01)
+                    subject_y_offset = gr.Slider(label="Subject Y Offset", minimum=-0.5, maximum=0.5, value=0.0, step=0.01)
                 steps = gr.Slider(label="Steps", minimum=1, maximum=100, value=25, step=1)
                 cfg = gr.Slider(label="CFG Scale", minimum=1.0, maximum=32.0, value=2, step=0.01)
                 lowres_denoise = gr.Slider(label="Lowres Denoise (for initial latent)", minimum=0.1, maximum=1.0, value=0.9, step=0.01)
@@ -424,7 +493,7 @@ with block:
             outputs=[result_gallery, output_bg],
             run_on_click=True, examples_per_page=1024
         )
-    ips = [input_fg, prompt, image_width, image_height, num_samples, seed, steps, a_prompt, n_prompt, cfg, highres_scale, highres_denoise, lowres_denoise, bg_source]
+    ips = [input_fg, prompt, image_width, image_height, num_samples, seed, steps, a_prompt, n_prompt, cfg, highres_scale, highres_denoise, lowres_denoise, bg_source, subject_scale, subject_x_offset, subject_y_offset]
     relight_button.click(fn=process_relight, inputs=ips, outputs=[output_bg, result_gallery])
     example_quick_prompts.click(lambda x, y: ', '.join(y.split(', ')[:2] + [x[0]]), inputs=[example_quick_prompts, prompt], outputs=prompt, show_progress=False, queue=False)
     example_quick_subjects.click(lambda x: x[0], inputs=example_quick_subjects, outputs=prompt, show_progress=False, queue=False)
