@@ -463,7 +463,33 @@ quick_prompts = [
     'shadow from window',
     'soft studio lighting',
     'home atmosphere, cozy bedroom illumination',
-    'neon, Wong Kar-wai, warm'
+    'neon, Wong Kar-wai, warm',
+    'bright morning sunlight, outdoor',
+    'cafe lighting, warm and cozy',
+    'beach sunset, golden hour',
+    'office fluorescent lighting',
+    'restaurant candlelight, romantic',
+    'library reading light, soft',
+    'garden party, natural daylight',
+    'shopping mall bright lighting',
+    'art gallery spotlight',
+    'kitchen warm lighting, homey',
+    'park morning light, fresh',
+    'hotel lobby elegant lighting',
+    'bookstore ambient lighting',
+    'rooftop city lights, evening',
+    'forest dappled sunlight',
+    'museum exhibition lighting',
+    'street lamp, night scene',
+    'fireplace warm glow',
+    'balcony afternoon light',
+    'classroom bright lighting',
+    'spa soft ambient lighting',
+    'theater stage lighting',
+    'greenhouse natural light',
+    'workshop industrial lighting',
+    'church stained glass light',
+    'train station platform lighting'
 ]
 quick_prompts = [[x] for x in quick_prompts]
 
@@ -471,8 +497,86 @@ quick_prompts = [[x] for x in quick_prompts]
 quick_subjects = [
     'beautiful woman, detailed face',
     'handsome man, detailed face',
+    'elegant lady, sophisticated style',
+    'young man, casual outfit',
+    'teenage girl, natural beauty',
+    'mature gentleman, distinguished look',
+    'cute child, innocent smile',
+    'elderly woman, wise expression',
+    'athletic man, strong physique',
+    'fashionable woman, trendy style',
+    'business man, professional attire',
+    'artistic woman, creative vibe',
+    'cute cat, fluffy fur',
+    'loyal dog, friendly expression',
+    'playful puppy, adorable eyes',
+    'majestic horse, noble stance',
+    'colorful parrot, vibrant feathers',
+    'fluffy rabbit, soft texture',
+    'golden retriever, warm smile',
+    'persian cat, luxurious coat',
+    'family portrait, loving bond',
+    'couple together, romantic mood',
+    'mother and child, tender moment',
+    'friends group, joyful gathering',
+    'pet and owner, companionship',
+    'siblings playing, happy interaction',
+    'grandmother and grandchild, generational love',
+    'wedding couple, celebration joy',
+    'baby with parents, new family',
+    'children with pets, innocent friendship'
 ]
 quick_subjects = [[x] for x in quick_subjects]
+
+
+quick_added_prompts = [
+    'best quality',
+    'masterpiece, high quality',
+    'ultra detailed, 8k',
+    'photorealistic, realistic',
+    'cinematic lighting',
+    'professional photography',
+    'studio lighting',
+    'sharp focus',
+    'vibrant colors',
+    'high resolution',
+    'detailed texture',
+    'perfect composition',
+    'dramatic lighting',
+    'soft lighting',
+    'natural lighting',
+    'warm tones',
+    'cool tones',
+    'artistic style',
+    'elegant pose',
+    'beautiful details'
+]
+quick_added_prompts = [[x] for x in quick_added_prompts]
+
+
+quick_negative_prompts = [
+    'lowres, bad anatomy, bad hands, cropped, worst quality',
+    'blurry, out of focus, low quality',
+    'bad lighting, overexposed, underexposed',
+    'distorted, deformed, ugly',
+    'noise, grain, artifacts',
+    'bad composition, cropped face',
+    'duplicate, multiple people',
+    'watermark, text, signature',
+    'cartoon, anime, painting',
+    'black and white, monochrome',
+    'bad proportions, asymmetric',
+    'extra limbs, missing limbs',
+    'bad eyes, closed eyes',
+    'bad skin, skin defects',
+    'bad hair, messy hair',
+    'bad background, cluttered',
+    'oversaturated, undersaturated',
+    'plastic, artificial',
+    'low contrast, flat lighting',
+    'amateur, unprofessional'
+]
+quick_negative_prompts = [[x] for x in quick_negative_prompts]
 
 
 class BGSource(Enum):
@@ -525,9 +629,11 @@ with block:
                 with gr.Row():
                     a_prompt = gr.Textbox(label="Added Prompt", value='best quality', scale=4)
                     translate_a_prompt_btn = gr.Button("🌐 翻译", size="sm", scale=1)
+                example_quick_added_prompts = gr.Dataset(samples=quick_added_prompts, label='Added Prompt Quick List', samples_per_page=1000, components=[a_prompt])
                 with gr.Row():
                     n_prompt = gr.Textbox(label="Negative Prompt", value='lowres, bad anatomy, bad hands, cropped, worst quality', scale=4)
                     translate_n_prompt_btn = gr.Button("🌐 翻译", size="sm", scale=1)
+                example_quick_negative_prompts = gr.Dataset(samples=quick_negative_prompts, label='Negative Prompt Quick List', samples_per_page=1000, components=[n_prompt])
         with gr.Column():
             result_gallery = gr.Gallery(height=832, object_fit='contain', label='Outputs')
     with gr.Row():
@@ -545,6 +651,8 @@ with block:
     relight_button.click(fn=process_relight, inputs=ips, outputs=[output_bg, result_gallery])
     example_quick_prompts.click(lambda x, y: ', '.join(y.split(', ')[:2] + [x[0]]), inputs=[example_quick_prompts, prompt], outputs=prompt, show_progress=False, queue=False)
     example_quick_subjects.click(lambda x: x[0], inputs=example_quick_subjects, outputs=prompt, show_progress=False, queue=False)
+    example_quick_added_prompts.click(lambda x: x[0], inputs=example_quick_added_prompts, outputs=a_prompt, show_progress=False, queue=False)
+    example_quick_negative_prompts.click(lambda x: x[0], inputs=example_quick_negative_prompts, outputs=n_prompt, show_progress=False, queue=False)
     
     # 翻译按钮事件
     translate_prompt_btn.click(fn=translate_to_english, inputs=prompt, outputs=prompt, show_progress=False, queue=False)

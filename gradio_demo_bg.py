@@ -560,6 +560,56 @@ quick_prompts = [
 quick_prompts = [[x] for x in quick_prompts]
 
 
+quick_added_prompts = [
+    'best quality',
+    'masterpiece, high quality',
+    'ultra detailed, 8k',
+    'photorealistic, realistic',
+    'cinematic lighting',
+    'professional photography',
+    'studio lighting',
+    'sharp focus',
+    'vibrant colors',
+    'high resolution',
+    'detailed texture',
+    'perfect composition',
+    'dramatic lighting',
+    'soft lighting',
+    'natural lighting',
+    'warm tones',
+    'cool tones',
+    'artistic style',
+    'elegant pose',
+    'beautiful details'
+]
+quick_added_prompts = [[x] for x in quick_added_prompts]
+
+
+quick_negative_prompts = [
+    'lowres, bad anatomy, bad hands, cropped, worst quality',
+    'blurry, out of focus, low quality',
+    'bad lighting, overexposed, underexposed',
+    'distorted, deformed, ugly',
+    'noise, grain, artifacts',
+    'bad composition, cropped face',
+    'duplicate, multiple people',
+    'watermark, text, signature',
+    'cartoon, anime, painting',
+    'black and white, monochrome',
+    'bad proportions, asymmetric',
+    'extra limbs, missing limbs',
+    'bad eyes, closed eyes',
+    'bad skin, skin defects',
+    'bad hair, messy hair',
+    'bad background, cluttered',
+    'oversaturated, undersaturated',
+    'plastic, artificial',
+    'low contrast, flat lighting',
+    'amateur, unprofessional'
+]
+quick_negative_prompts = [[x] for x in quick_negative_prompts]
+
+
 class BGSource(Enum):
     UPLOAD = "Use Background Image"
     UPLOAD_FLIP = "Use Flipped Background Image"
@@ -616,10 +666,12 @@ with block:
                 with gr.Row():
                     a_prompt = gr.Textbox(label="Added Prompt", value='best quality', scale=4)
                     translate_a_prompt_btn = gr.Button("🌐 翻译", size="sm", scale=1)
+                example_quick_added_prompts = gr.Dataset(samples=quick_added_prompts, label='Added Prompt Quick List', samples_per_page=1000, components=[a_prompt])
                 with gr.Row():
                     n_prompt = gr.Textbox(label="Negative Prompt",
                                           value='lowres, bad anatomy, bad hands, cropped, worst quality', scale=4)
                     translate_n_prompt_btn = gr.Button("🌐 翻译", size="sm", scale=1)
+                example_quick_negative_prompts = gr.Dataset(samples=quick_negative_prompts, label='Negative Prompt Quick List', samples_per_page=1000, components=[n_prompt])
                 normal_button = gr.Button(value="Compute Normal (4x Slower)")
         with gr.Column():
             result_gallery = gr.Gallery(height=832, object_fit='contain', label='Outputs')
@@ -638,6 +690,8 @@ with block:
     relight_button.click(fn=process_relight, inputs=ips, outputs=[result_gallery])
     normal_button.click(fn=process_normal, inputs=ips, outputs=[result_gallery])
     example_prompts.click(lambda x: x[0], inputs=example_prompts, outputs=prompt, show_progress=False, queue=False)
+    example_quick_added_prompts.click(lambda x: x[0], inputs=example_quick_added_prompts, outputs=a_prompt, show_progress=False, queue=False)
+    example_quick_negative_prompts.click(lambda x: x[0], inputs=example_quick_negative_prompts, outputs=n_prompt, show_progress=False, queue=False)
     
     # 翻译按钮事件
     translate_prompt_btn.click(fn=translate_to_english, inputs=prompt, outputs=prompt, show_progress=False, queue=False)
